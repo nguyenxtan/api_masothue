@@ -110,6 +110,21 @@ curl -X POST http://localhost:3001/api/tax-lookup \
 
 Thay `SERVER_IP` bằng IP/host của server đang chạy container.
 
+## Cung cấp `companyName` (sinh detailUrl tự động — KHÔNG cần API key)
+
+n8n thường đã có sẵn `companyName`. Truyền cùng `taxCode`, API sẽ tự ghép URL chi tiết theo công thức `https://masothue.com/{taxCode}-{slug(companyName)}` và parse trực tiếp:
+
+```bash
+wget -qO- \
+  --header="Content-Type: application/json" \
+  --post-data='{"taxCode":"1101550146","companyName":"CÔNG TY CỔ PHẦN ANOVA FEED"}' \
+  http://127.0.0.1:3001/api/tax-lookup
+```
+
+URL sinh ra: `https://masothue.com/1101550146-cong-ty-co-phan-anova-feed`. Slug được tạo bằng `slugifyVietnamese()` (lowercase, bỏ dấu, `đ→d`, `&→and`, các ký tự khác → `-`, gộp `-` lặp).
+
+Nếu URL sinh ra trả 404 hoặc không chứa đúng `taxCode` → tự động chuyển sang flow lookup bình thường (`masothue-direct` → `masothue-search` → `masothue-known` → `tvpl-*`).
+
 ## Cung cấp `detailUrl` (bỏ qua mọi search discovery)
 
 n8n vẫn chỉ cần gửi `taxCode`, nhưng nếu biết trước URL chi tiết, có thể truyền kèm để bypass mọi bước search:

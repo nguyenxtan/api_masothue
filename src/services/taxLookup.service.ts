@@ -9,6 +9,7 @@ import {
   parseThuVienPhapLuatHtml,
 } from "./sources/thuvienphapluat.source";
 import { discoverViaExternalSearch } from "./searchDiscovery/searchDiscovery.service";
+import { buildMasothueDetailUrl } from "./sources/masothueUrl.service";
 import { fetchHtml } from "../utils/httpClient";
 
 const MASOTHUE_HOSTS = new Set(["masothue.com", "www.masothue.com"]);
@@ -16,6 +17,7 @@ const TVPL_HOSTS = new Set(["thuvienphapluat.vn", "www.thuvienphapluat.vn"]);
 
 export interface LookupOptions {
   detailUrl?: string;
+  companyName?: string;
   attempts?: AttemptRecord[];
 }
 
@@ -75,15 +77,42 @@ async function lookupByDetailUrl(
   return parseThuVienPhapLuatHtml(fetched.html, taxCode);
 }
 
+async function lookupByGeneratedUrl(
+  taxCode: string,
+  companyName: string,
+  attempts: AttemptRecord[] | undefined
+): Promise<TaxLookupResult | null> {
+  const generatedUrl = buildMasothueDetailUrl(taxCode, companyName);
+  const fetched = await fetchHtml(generatedUrl);
+  attempts?.push({
+    strategy: "generated-masothue-url",
+    url: generatedUrl,
+    status: fetched?.status ?? null,
+    matchedTaxCode: fetched ? fetched.html.includes(taxCode) : false,
+  });
+  if (!fetched || fetched.status >= 400) return null;
+  if (!fetched.html.includes(taxCode)) return null;
+  return parseMasothueHtml(fetched.html, taxCode);
+}
+
 export async function lookupTaxCode(
   taxCode: string,
   options: LookupOptions = {}
 ): Promise<TaxLookupResult> {
-  const { detailUrl, attempts } = options;
+  const { detailUrl, companyName, attempts } = options;
 
   if (detailUrl) {
     const fromUrl = await lookupByDetailUrl(taxCode, detailUrl, attempts);
     if (fromUrl) return fromUrl;
+  }
+
+  if (companyName && companyName.trim().length > 0) {
+    const fromGenerated = await lookupByGeneratedUrl(
+      taxCode,
+      companyName.trim(),
+      attempts
+    );
+    if (fromGenerated) return fromGenerated;
   }
 
   try {

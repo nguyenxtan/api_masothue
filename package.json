@@ -7,7 +7,7 @@
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "test": "tsc -p tsconfig.test.json && node dist-test/tests/validateTaxCode.test.js"
+    "test": "tsc -p tsconfig.test.json && node dist-test/tests/validateTaxCode.test.js && node dist-test/tests/slugifyVietnamese.test.js"
   },
   "dependencies": {
     "axios": "^1.7.7",

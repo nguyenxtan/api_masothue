@@ -49,9 +49,15 @@ export async function taxLookupHandler(req: Request, res: Response) {
   const includeDebug = body.includeDebug === true;
   const attempts: AttemptRecord[] = [];
 
+  const companyName =
+    typeof body.companyName === "string" && body.companyName.trim().length > 0
+      ? body.companyName.trim()
+      : undefined;
+
   try {
     const result = await lookupTaxCode(taxCode, {
       detailUrl,
+      companyName,
       attempts: includeDebug ? attempts : undefined,
     });
     const response: Record<string, unknown> = { ...result };
