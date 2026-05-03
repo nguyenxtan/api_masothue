@@ -140,6 +140,41 @@ Yêu cầu:
 - `detailUrl` phải có host `masothue.com` hoặc `thuvienphapluat.vn`. Host khác → HTTP 400 `INVALID_DETAIL_URL`.
 - HTML trả về phải chứa đúng `taxCode` mới được parse. Nếu lệch → trả về tất cả `null`.
 
+## Phân biệt "không tìm thấy" với "bị anti-bot chặn"
+
+Response chuẩn (không tìm thấy MST nhưng nguồn vẫn hoạt động):
+
+```json
+{
+  "success": true,
+  "taxCode": "...",
+  "companyName": null,
+  "taxAddress": null,
+  "address": null,
+  "source": null
+}
+```
+
+Response khi nguồn (masothue.com / thuvienphapluat.vn) trả anti-bot / Cloudflare challenge / `Check bot`:
+
+```json
+{
+  "success": true,
+  "taxCode": "...",
+  "companyName": null,
+  "taxAddress": null,
+  "address": null,
+  "source": null,
+  "blocked": true,
+  "reason": "SOURCE_BLOCKED_BY_ANTIBOT",
+  "retryAfterSeconds": 1800
+}
+```
+
+Khi phát hiện anti-bot, host bị đặt cooldown (`SOURCE_BLOCK_COOLDOWN_SECONDS`, mặc định 1800s). Trong khoảng cooldown, mọi request tới host đó bị skip ngay → tránh hammer source. n8n nên đợi `retryAfterSeconds` trước khi retry.
+
+`blocked` chỉ xuất hiện khi thực sự bị chặn — 404 thuần / không tìm thấy → KHÔNG có field `blocked`.
+
 ## External search fallback (Brave Search API)
 
 Khi cả `masothue.com` lẫn `thuvienphapluat.vn` đều không tìm thấy (search redirect sai MST, anti-bot, layout đổi…), API có thể tự discover URL chi tiết qua Brave Search.

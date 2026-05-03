@@ -1,6 +1,16 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from "axios";
+import { detectAntiBot } from "./detectAntiBot";
+import {
+  isInCooldown,
+  setCooldown,
+} from "./sourceCooldown";
+import { markBlocked } from "./lookupContext";
 
 const TIMEOUT_MS = parseInt(process.env.HTTP_TIMEOUT_MS || "10000", 10);
+const COOLDOWN_SECONDS = parseInt(
+  process.env.SOURCE_BLOCK_COOLDOWN_SECONDS || "1800",
+  10
+);
 const DEBUG = process.env.DEBUG_LOOKUP === "true";
 
 const BROWSER_USER_AGENT =
@@ -131,14 +141,48 @@ async function tryNodeFetch(
   }
 }
 
+function hostOf(url: string): string | null {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
+function maybeFlagBlocked(res: FetchResult, requestUrl: string) {
+  if (!detectAntiBot(res.html, res.status)) return;
+  const host =
+    hostOf(res.finalUrl) || hostOf(requestUrl) || null;
+  if (!host) return;
+  setCooldown(host, COOLDOWN_SECONDS);
+  markBlocked(host);
+  if (DEBUG) {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[lookup] anti-bot detected on ${host} (status=${res.status}); cooldown=${COOLDOWN_SECONDS}s`
+    );
+  }
+}
+
 export async function fetchHtml(
   url: string,
   config?: AxiosRequestConfig
 ): Promise<FetchResult | null> {
+  const host = hostOf(url);
+  if (host && isInCooldown(host)) {
+    markBlocked(host);
+    if (DEBUG) {
+      // eslint-disable-next-line no-console
+      console.log(`[lookup] skip ${url} (host ${host} in cooldown)`);
+    }
+    return null;
+  }
+
   // 1. axios + browser headers
   let res = await tryAxios(url, BROWSER_HEADERS, config);
   if (res) {
     logFetch(url, res.status, res.finalUrl, res.html, "axios-browser");
+    maybeFlagBlocked(res, url);
     if (res.status < 400) return res;
   }
 
@@ -146,6 +190,7 @@ export async function fetchHtml(
   const wgetRes = await tryAxios(url, WGET_HEADERS, config);
   if (wgetRes) {
     logFetch(url, wgetRes.status, wgetRes.finalUrl, wgetRes.html, "axios-wget");
+    maybeFlagBlocked(wgetRes, url);
     if (wgetRes.status < 400) return wgetRes;
     if (!res) res = wgetRes;
   }
@@ -160,6 +205,7 @@ export async function fetchHtml(
       fetchRes.html,
       "node-fetch-browser"
     );
+    maybeFlagBlocked(fetchRes, url);
     if (fetchRes.status < 400) return fetchRes;
     if (!res) res = fetchRes;
   }

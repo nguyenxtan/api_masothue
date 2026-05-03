@@ -11,6 +11,11 @@ import {
 import { discoverViaExternalSearch } from "./searchDiscovery/searchDiscovery.service";
 import { buildMasothueDetailUrl } from "./sources/masothueUrl.service";
 import { fetchHtml } from "../utils/httpClient";
+import {
+  lookupContext,
+  LookupContext,
+} from "../utils/lookupContext";
+import { getCooldownRemainingSeconds } from "../utils/sourceCooldown";
 
 const MASOTHUE_HOSTS = new Set(["masothue.com", "www.masothue.com"]);
 const TVPL_HOSTS = new Set(["thuvienphapluat.vn", "www.thuvienphapluat.vn"]);
@@ -20,6 +25,14 @@ export interface LookupOptions {
   companyName?: string;
   attempts?: AttemptRecord[];
 }
+
+export interface BlockedFields {
+  blocked: true;
+  reason: "SOURCE_BLOCKED_BY_ANTIBOT";
+  retryAfterSeconds: number;
+}
+
+export type TaxLookupResponse = TaxLookupResult | (TaxLookupResult & BlockedFields);
 
 function nullResult(taxCode: string): TaxLookupResult {
   return {
@@ -95,9 +108,9 @@ async function lookupByGeneratedUrl(
   return parseMasothueHtml(fetched.html, taxCode);
 }
 
-export async function lookupTaxCode(
+async function runLookup(
   taxCode: string,
-  options: LookupOptions = {}
+  options: LookupOptions
 ): Promise<TaxLookupResult> {
   const { detailUrl, companyName, attempts } = options;
 
@@ -133,6 +146,43 @@ export async function lookupTaxCode(
   if (fromExternal) return fromExternal;
 
   return nullResult(taxCode);
+}
+
+function maxCooldownRemaining(hosts: Iterable<string>): number {
+  let max = 0;
+  for (const h of hosts) {
+    const r = getCooldownRemainingSeconds(h);
+    if (r > max) max = r;
+  }
+  return max;
+}
+
+export async function lookupTaxCode(
+  taxCode: string,
+  options: LookupOptions = {}
+): Promise<TaxLookupResponse> {
+  const ctx: LookupContext = { blockedHosts: new Set<string>() };
+
+  const result = await lookupContext.run(ctx, () => runLookup(taxCode, options));
+
+  const found =
+    result.companyName !== null ||
+    result.taxAddress !== null ||
+    result.address !== null;
+
+  if (!found && ctx.blockedHosts.size > 0) {
+    const retry =
+      maxCooldownRemaining(ctx.blockedHosts) ||
+      parseInt(process.env.SOURCE_BLOCK_COOLDOWN_SECONDS || "1800", 10);
+    return {
+      ...result,
+      blocked: true,
+      reason: "SOURCE_BLOCKED_BY_ANTIBOT",
+      retryAfterSeconds: retry,
+    };
+  }
+
+  return result;
 }
 
 export { lookupFromMasothue, lookupFromThuVienPhapLuat };
