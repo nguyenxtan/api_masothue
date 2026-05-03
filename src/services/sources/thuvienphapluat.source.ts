@@ -1,46 +1,77 @@
 import * as cheerio from "cheerio";
-import { safeGet } from "../../utils/httpClient";
+import { fetchHtml, debugLog, FetchResult } from "../../utils/httpClient";
 import { normalizeText } from "../../utils/normalizeText";
 import { TaxLookupResult } from "../../types/taxLookup.types";
 
 const BASE_URL = "https://thuvienphapluat.vn";
 
-async function findDetailUrl(taxCode: string): Promise<string | null> {
-  const searchUrls = [
+function looksLikeDetail(html: string, taxCode: string): boolean {
+  return (
+    html.includes(`mst-${taxCode}.html`) ||
+    /Địa chỉ trụ sở/i.test(html) ||
+    new RegExp(`Mã số thuế[^<]*${taxCode}`, "i").test(html)
+  );
+}
+
+async function findDetailHtml(taxCode: string): Promise<FetchResult | null> {
+  const searchEndpoints = [
     `${BASE_URL}/ma-so-thue/tim-ma-so-thue.aspx?keyword=${encodeURIComponent(taxCode)}`,
     `${BASE_URL}/ma-so-thue?keyword=${encodeURIComponent(taxCode)}`,
-    `https://www.google.com/search?q=${encodeURIComponent(
-      `site:thuvienphapluat.vn/ma-so-thue ${taxCode}`
-    )}`,
+    `${BASE_URL}/ma-so-thue/${encodeURIComponent(taxCode)}`,
   ];
 
-  for (const searchUrl of searchUrls) {
-    const html = await safeGet(searchUrl);
-    if (!html) continue;
+  for (const url of searchEndpoints) {
+    const res = await fetchHtml(url);
+    if (!res) continue;
 
-    const $ = cheerio.load(html);
+    if (
+      res.finalUrl &&
+      res.finalUrl.includes(`mst-${taxCode}.html`) &&
+      looksLikeDetail(res.html, taxCode)
+    ) {
+      debugLog("tvpl: search redirected to detail", res.finalUrl);
+      return res;
+    }
 
+    const $ = cheerio.load(res.html);
     let foundHref: string | null = null;
     $("a").each((_, el) => {
       const href = $(el).attr("href") || "";
-      if (
-        href.includes("/ma-so-thue/") &&
-        href.includes(taxCode) &&
-        href.endsWith(".html")
-      ) {
+      if (href.includes(`mst-${taxCode}.html`)) {
         foundHref = href.startsWith("http") ? href : `${BASE_URL}${href}`;
         return false;
       }
       return;
     });
 
-    if (foundHref) return foundHref;
+    if (foundHref) {
+      debugLog("tvpl: detail link discovered", foundHref);
+      const detail = await fetchHtml(foundHref);
+      if (detail) return detail;
+    }
   }
 
   return null;
 }
 
-function extractFromDetail($: cheerio.CheerioAPI, taxCode: string) {
+function extractInvoiceAddress($: cheerio.CheerioAPI): string | null {
+  const allText = normalizeText($("body").text());
+  const lower = allText.toLowerCase();
+  const idx = lower.indexOf("thông tin xuất hóa đơn");
+  if (idx < 0) return null;
+
+  const after = allText.substring(idx, idx + 1500);
+  const m = after.match(
+    /Địa chỉ\s*:\s*(.+?)(?=\s+(?:Mã số thuế|Tên đơn vị|Tên người nộp thuế|Điện thoại|Email|Tài khoản|Hotline|$))/i
+  );
+  if (m && m[1]) {
+    const candidate = normalizeText(m[1]);
+    if (candidate.length > 3) return candidate;
+  }
+  return null;
+}
+
+function extractFromDetail($: cheerio.CheerioAPI) {
   const result = {
     companyName: null as string | null,
     taxAddress: null as string | null,
@@ -50,95 +81,22 @@ function extractFromDetail($: cheerio.CheerioAPI, taxCode: string) {
   const h1 = normalizeText($("h1").first().text());
   if (h1) result.companyName = h1;
 
-  const mainContainer =
-    $(".the-content").first().length > 0
-      ? $(".the-content").first()
-      : $("main").first().length > 0
-        ? $("main").first()
-        : $("body");
+  const bodyText = normalizeText($("body").text());
 
-  // Extract Địa chỉ trụ sở (priority: sau sáp nhập > regular)
-  let merged: string | null = null;
-  let primary: string | null = null;
+  const merged = bodyText.match(
+    /Địa chỉ trụ sở \(sau sáp nhập\)\s*:?\s*(.+?)(?=\s+(?:Mã số thuế|Người đại diện|Điện thoại|Ngày hoạt động|Tình trạng|Loại hình|Ngành nghề|Địa chỉ|$))/i
+  );
+  const primary = bodyText.match(
+    /Địa chỉ trụ sở(?!\s*\()\s*:?\s*(.+?)(?=\s+(?:Mã số thuế|Người đại diện|Điện thoại|Ngày hoạt động|Tình trạng|Loại hình|Ngành nghề|Địa chỉ|$))/i
+  );
 
-  mainContainer.find("p, div, td, li").each((_, el) => {
-    const text = normalizeText($(el).text());
-    const lower = text.toLowerCase();
-
-    if (lower.startsWith("địa chỉ trụ sở (sau sáp nhập)") && !merged) {
-      const value = text
-        .replace(/^[^:]*:\s*/i, "")
-        .trim();
-      if (value && value.toLowerCase() !== text.toLowerCase()) merged = value;
-    } else if (
-      (lower.startsWith("địa chỉ trụ sở:") ||
-        lower === "địa chỉ trụ sở" ||
-        lower.startsWith("địa chỉ trụ sở ")) &&
-      !primary &&
-      !lower.includes("(sau sáp nhập)")
-    ) {
-      const value = text.replace(/^[^:]*:\s*/i, "").trim();
-      if (value && value.toLowerCase() !== text.toLowerCase()) primary = value;
-    }
-  });
-
-  result.taxAddress = merged || primary;
-
-  // Try to find invoice section "Thông tin xuất Hóa đơn"
-  let invoiceSectionFound = false;
-  let invoiceAddress: string | null = null;
-
-  mainContainer.find("*").each((_, el) => {
-    const text = normalizeText($(el).text());
-    const lower = text.toLowerCase();
-    if (
-      !invoiceSectionFound &&
-      (lower === "thông tin xuất hóa đơn" ||
-        lower.startsWith("thông tin xuất hóa đơn"))
-    ) {
-      invoiceSectionFound = true;
-      // Search next siblings for address
-      let node = $(el);
-      for (let i = 0; i < 30; i++) {
-        node = node.next();
-        if (!node.length) break;
-        const t = normalizeText(node.text());
-        const tl = t.toLowerCase();
-        if (tl.startsWith("địa chỉ:") || tl === "địa chỉ") {
-          const val = t.replace(/^[^:]*:\s*/i, "").trim();
-          if (val && val.toLowerCase() !== t.toLowerCase()) {
-            invoiceAddress = val;
-          }
-          break;
-        }
-      }
-    }
-  });
-
-  // Alternative: look for table rows under invoice
-  if (!invoiceAddress) {
-    const allText = mainContainer.text();
-    const lowered = allText.toLowerCase();
-    const idx = lowered.indexOf("thông tin xuất hóa đơn");
-    if (idx >= 0) {
-      const after = allText.substring(idx, idx + 2000);
-      const m = after.match(/Địa chỉ\s*:?\s*([^\n\r]+?)(?=\s{2,}|Mã số thuế|Tên|$)/i);
-      if (m && m[1]) {
-        const candidate = normalizeText(m[1]);
-        if (candidate && candidate.length > 3) {
-          invoiceAddress = candidate;
-        }
-      }
-    }
+  if (merged && merged[1]) {
+    result.taxAddress = normalizeText(merged[1]);
+  } else if (primary && primary[1]) {
+    result.taxAddress = normalizeText(primary[1]);
   }
 
-  result.address = invoiceAddress;
-
-  if (result.taxAddress && result.address && result.address === result.taxAddress) {
-    // Address explicitly equals taxAddress — keep only if invoice section actually had it.
-    // The instructions say: do not copy taxAddress into address. If invoice address is empty, return null.
-    // Since we extracted from invoice section, allow it.
-  }
+  result.address = extractInvoiceAddress($);
 
   return result;
 }
@@ -147,20 +105,34 @@ export async function lookupFromThuVienPhapLuat(
   taxCode: string
 ): Promise<TaxLookupResult | null> {
   try {
-    const detailUrl = await findDetailUrl(taxCode);
-    if (!detailUrl) return null;
+    const detail = await findDetailHtml(taxCode);
+    if (!detail || !detail.html) {
+      debugLog("tvpl: no detail HTML for", taxCode);
+      return null;
+    }
 
-    const html = await safeGet(detailUrl);
-    if (!html) return null;
+    if (!looksLikeDetail(detail.html, taxCode)) {
+      debugLog("tvpl: detail does not look like a tax-detail page");
+      return null;
+    }
 
-    const $ = cheerio.load(html);
+    const $ = cheerio.load(detail.html);
+    if (!normalizeText($("body").text()).includes(taxCode)) {
+      debugLog("tvpl: body does not contain taxCode", taxCode);
+      return null;
+    }
 
-    const bodyText = normalizeText($("body").text());
-    if (!bodyText.includes(taxCode)) return null;
+    const data = extractFromDetail($);
 
-    const data = extractFromDetail($, taxCode);
+    debugLog("tvpl: parsed", {
+      taxCode,
+      finalUrl: detail.finalUrl,
+      companyName: data.companyName,
+      taxAddress: data.taxAddress,
+      address: data.address,
+    });
 
-    if (!data.companyName) return null;
+    if (!data.companyName && !data.taxAddress && !data.address) return null;
 
     return {
       success: true,
@@ -170,7 +142,8 @@ export async function lookupFromThuVienPhapLuat(
       address: data.address,
       source: "thuvienphapluat.vn",
     };
-  } catch {
+  } catch (err) {
+    debugLog("tvpl: error", err);
     return null;
   }
 }

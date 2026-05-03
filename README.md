@@ -110,6 +110,33 @@ curl -X POST http://localhost:3001/api/tax-lookup \
 
 Thay `SERVER_IP` bằng IP/host của server đang chạy container.
 
+## Manual test cho tax code chi nhánh
+
+```bash
+curl -X POST http://localhost:3001/api/tax-lookup \
+  -H "Content-Type: application/json" \
+  -d '{"taxCode":"0100104595-017"}'
+```
+
+Kết quả mong đợi (không được rỗng tất cả):
+
+```json
+{
+  "success": true,
+  "taxCode": "0100104595-017",
+  "companyName": "CÔNG TY VẬN TẢI BIỂN CONTAINER VIMC - CHI NHÁNH TỔNG CÔNG TY HÀNG HẢI VIỆT NAM - CTCP",
+  "taxAddress": "Tòa nhà Ocean Park, số 1 Đào Duy Anh, Phường Kim Liên, TP Hà Nội, Việt Nam",
+  "address": "Tòa nhà Ocean Park, số 1 Đào Duy Anh, Phường Phương Mai, Quận Đống Đa, Thành phố Hà Nội, Việt Nam",
+  "source": "masothue.com"
+}
+```
+
+Bật log debug để xem URL được gọi, redirect cuối cùng, status, và field đã parse:
+
+```bash
+DEBUG_LOOKUP=true npm start
+```
+
 ## Biến môi trường
 
 File `.env`:
@@ -118,6 +145,7 @@ File `.env`:
 PORT=3000
 HTTP_TIMEOUT_MS=10000
 NODE_ENV=production
+DEBUG_LOOKUP=false
 ```
 
 ## Cấu trúc thư mục
