@@ -118,7 +118,7 @@ curl -X POST http://localhost:3001/api/tax-lookup \
   -d '{"taxCode":"0100104595-017"}'
 ```
 
-Kết quả mong đợi (không được rỗng tất cả):
+Kết quả phải có `companyName` và `address` khác `null`:
 
 ```json
 {
@@ -131,7 +131,24 @@ Kết quả mong đợi (không được rỗng tất cả):
 }
 ```
 
-Bật log debug để xem URL được gọi, redirect cuối cùng, status, và field đã parse:
+Nếu masothue.com đổi layout làm bảng `table-taxinfo` không còn, parser sẽ tự động fallback:
+- `companyName` ← `<title>` ("`{taxCode} - {companyName} - MaSoThue`")
+- `address` ← `<meta name="description">` (đoạn sau `mã số thuế {taxCode} - `)
+
+Khi đó tối thiểu sẽ trả về:
+
+```json
+{
+  "success": true,
+  "taxCode": "0100104595-017",
+  "companyName": "CÔNG TY VẬN TẢI BIỂN CONTAINER VIMC - CHI NHÁNH TỔNG CÔNG TY HÀNG HẢI VIỆT NAM - CTCP",
+  "taxAddress": null,
+  "address": "Tòa nhà Ocean Park, số 1 Đào Duy Anh, Phường Phương Mai, Quận Đống Đa, Thành phố Hà Nội, Việt Nam",
+  "source": "masothue.com"
+}
+```
+
+Bật log debug để xem URL được gọi, redirect cuối cùng, status, title/meta description, fallback và field đã parse:
 
 ```bash
 DEBUG_LOOKUP=true npm start

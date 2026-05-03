@@ -106,6 +106,58 @@ function extractFromMainBlock($: cheerio.CheerioAPI) {
   return result;
 }
 
+function extractFromMeta(
+  $: cheerio.CheerioAPI,
+  taxCode: string
+): {
+  companyName: string | null;
+  address: string | null;
+  title: string;
+  metaDesc: string;
+} {
+  const fallback = {
+    companyName: null as string | null,
+    address: null as string | null,
+    title: "",
+    metaDesc: "",
+  };
+
+  const titleRaw = normalizeText($("title").first().text());
+  fallback.title = titleRaw;
+  if (titleRaw) {
+    let title = titleRaw.replace(/\s*-\s*MaSoThue\s*$/i, "");
+    const prefix = `${taxCode} - `;
+    if (title.startsWith(prefix)) {
+      const rest = title.substring(prefix.length).trim();
+      if (rest) fallback.companyName = rest;
+    }
+  }
+
+  const metaDesc = normalizeText(
+    $('meta[name="description"]').attr("content") || ""
+  );
+  fallback.metaDesc = metaDesc;
+  if (metaDesc) {
+    const markerLabeled = `mã số thuế ${taxCode} - `;
+    const lower = metaDesc.toLowerCase();
+    let idx = lower.indexOf(markerLabeled.toLowerCase());
+    let consumed = markerLabeled.length;
+
+    if (idx < 0) {
+      const markerBare = `${taxCode} - `;
+      idx = metaDesc.indexOf(markerBare);
+      consumed = markerBare.length;
+    }
+
+    if (idx >= 0) {
+      const after = metaDesc.substring(idx + consumed).trim();
+      if (after) fallback.address = after;
+    }
+  }
+
+  return fallback;
+}
+
 export async function lookupFromMasothue(
   taxCode: string
 ): Promise<TaxLookupResult | null> {
@@ -118,12 +170,32 @@ export async function lookupFromMasothue(
 
     const $ = cheerio.load(detail.html);
 
-    if (!pageHasExactTaxCode($, taxCode)) {
+    const data = extractFromMainBlock($);
+    const meta = extractFromMeta($, taxCode);
+
+    debugLog("masothue: meta", {
+      title: meta.title,
+      metaDesc: meta.metaDesc,
+      fallbackCompanyName: meta.companyName,
+      fallbackAddress: meta.address,
+    });
+
+    const hasTaxCodeInMeta =
+      meta.title.includes(taxCode) || meta.metaDesc.includes(taxCode);
+
+    if (!pageHasExactTaxCode($, taxCode) && !hasTaxCodeInMeta) {
       debugLog("masothue: page does not contain exact taxCode", taxCode);
       return null;
     }
 
-    const data = extractFromMainBlock($);
+    if (!data.companyName && meta.companyName) {
+      debugLog("masothue: fallback companyName from <title>");
+      data.companyName = meta.companyName;
+    }
+    if (!data.address && meta.address) {
+      debugLog("masothue: fallback address from meta description");
+      data.address = meta.address;
+    }
 
     debugLog("masothue: parsed", {
       taxCode,
@@ -133,7 +205,9 @@ export async function lookupFromMasothue(
       address: data.address,
     });
 
-    if (!data.companyName && !data.taxAddress && !data.address) return null;
+    if (!data.companyName && !data.taxAddress && !data.address) {
+      return null;
+    }
 
     return {
       success: true,
