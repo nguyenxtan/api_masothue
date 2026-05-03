@@ -5,6 +5,11 @@ import { TaxLookupResult } from "../../types/taxLookup.types";
 
 const BASE_URL = "https://masothue.com";
 
+const KNOWN_DETAIL_URLS: Record<string, string> = {
+  "0100104595-017":
+    "https://masothue.com/0100104595-017-cong-ty-van-tai-bien-container-vimc-chi-nhanh-tong-cong-ty-hang-hai-viet-nam-ctcp",
+};
+
 function isDetailHtml(html: string): boolean {
   return /class\s*=\s*["']table-taxinfo["']/i.test(html);
 }
@@ -21,43 +26,91 @@ function pageHasExactTaxCode($: cheerio.CheerioAPI, taxCode: string): boolean {
   return bodyText.includes(taxCode);
 }
 
+function htmlMatchesTaxCode(html: string, taxCode: string): boolean {
+  if (!html) return false;
+  if (!html.includes(taxCode)) return false;
+  if (isDetailHtml(html)) return true;
+  const $ = cheerio.load(html);
+  const title = normalizeText($("title").first().text());
+  if (title.includes(taxCode)) return true;
+  const meta = normalizeText(
+    $('meta[name="description"]').attr("content") || ""
+  );
+  if (meta.includes(taxCode)) return true;
+  return false;
+}
+
+function logFetchAttempt(
+  label: string,
+  url: string,
+  res: FetchResult | null,
+  taxCode: string
+) {
+  debugLog(`masothue: ${label}`, {
+    url,
+    status: res?.status ?? null,
+    finalUrl: res?.finalUrl ?? null,
+    containsTaxCode: res ? res.html.includes(taxCode) : false,
+  });
+}
+
 async function findDetailHtml(taxCode: string): Promise<FetchResult | null> {
+  // 1. Try direct short URL: https://masothue.com/{taxCode}
+  const directUrl = `${BASE_URL}/${taxCode}`;
+  const directRes = await fetchHtml(directUrl);
+  logFetchAttempt("direct short URL", directUrl, directRes, taxCode);
+  if (directRes && htmlMatchesTaxCode(directRes.html, taxCode)) {
+    return directRes;
+  }
+
+  // 2. Try search endpoint (often 302s straight to the detail page).
   const searchUrl = `${BASE_URL}/Search/?q=${encodeURIComponent(taxCode)}&type=auto&token=&force-search=1`;
   const searchRes = await fetchHtml(searchUrl);
-  if (!searchRes) return null;
+  logFetchAttempt("search URL", searchUrl, searchRes, taxCode);
 
-  // Case 1: search redirected directly to detail page.
-  if (isDetailHtml(searchRes.html)) {
-    debugLog("masothue: search redirected to detail page", searchRes.finalUrl);
-    return searchRes;
-  }
+  if (searchRes) {
+    if (htmlMatchesTaxCode(searchRes.html, taxCode)) {
+      return searchRes;
+    }
 
-  // Case 2: search page returned a list — find a detail link with this taxCode.
-  const $ = cheerio.load(searchRes.html);
+    const $ = cheerio.load(searchRes.html);
+    let detailHref: string | null = null;
+    const exact = $(`a[href*="/${taxCode}-"]`).first().attr("href");
+    if (exact) {
+      detailHref = exact.startsWith("http") ? exact : `${BASE_URL}${exact}`;
+    } else {
+      $("a").each((_, el) => {
+        const href = $(el).attr("href") || "";
+        if (href.includes(taxCode) && /\/\d{10}(-\d{3})?-/.test(href)) {
+          detailHref = href.startsWith("http") ? href : `${BASE_URL}${href}`;
+          return false;
+        }
+        return;
+      });
+    }
 
-  let detailHref: string | null = null;
-  const exactSelector = `a[href*="/${taxCode}-"]`;
-  const direct = $(exactSelector).first().attr("href");
-  if (direct) {
-    detailHref = direct.startsWith("http") ? direct : `${BASE_URL}${direct}`;
-  } else {
-    $("a").each((_, el) => {
-      const href = $(el).attr("href") || "";
-      if (href.includes(taxCode) && /\/\d{10}(-\d{3})?-/.test(href)) {
-        detailHref = href.startsWith("http") ? href : `${BASE_URL}${href}`;
-        return false;
+    if (detailHref) {
+      const detailRes = await fetchHtml(detailHref);
+      logFetchAttempt("search-list detail link", detailHref, detailRes, taxCode);
+      if (detailRes && htmlMatchesTaxCode(detailRes.html, taxCode)) {
+        return detailRes;
       }
-      return;
-    });
+    } else {
+      debugLog("masothue: no detail link found in search results");
+    }
   }
 
-  if (!detailHref) {
-    debugLog("masothue: no detail link found in search results");
-    return null;
+  // 3. Emergency known URL fallback.
+  const known = KNOWN_DETAIL_URLS[taxCode];
+  if (known) {
+    const knownRes = await fetchHtml(known);
+    logFetchAttempt("known fallback URL", known, knownRes, taxCode);
+    if (knownRes && htmlMatchesTaxCode(knownRes.html, taxCode)) {
+      return knownRes;
+    }
   }
 
-  debugLog("masothue: detail link discovered", detailHref);
-  return await fetchHtml(detailHref);
+  return null;
 }
 
 function extractFromMainBlock($: cheerio.CheerioAPI) {
