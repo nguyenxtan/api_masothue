@@ -87,22 +87,14 @@ export async function lookupTaxCode(
   }
 
   try {
-    const fromMasothue = await lookupFromMasothue(taxCode);
-    attempts?.push({
-      strategy: "masothue",
-      matchedTaxCode: !!fromMasothue,
-    });
+    const fromMasothue = await lookupFromMasothue(taxCode, attempts);
     if (fromMasothue) return fromMasothue;
   } catch {
     attempts?.push({ strategy: "masothue", error: "exception" });
   }
 
   try {
-    const fromTVPL = await lookupFromThuVienPhapLuat(taxCode);
-    attempts?.push({
-      strategy: "thuvienphapluat",
-      matchedTaxCode: !!fromTVPL,
-    });
+    const fromTVPL = await lookupFromThuVienPhapLuat(taxCode, attempts);
     if (fromTVPL) return fromTVPL;
   } catch {
     attempts?.push({ strategy: "thuvienphapluat", error: "exception" });

@@ -2,6 +2,7 @@ import * as cheerio from "cheerio";
 import { fetchHtml, debugLog, FetchResult } from "../../utils/httpClient";
 import { normalizeText } from "../../utils/normalizeText";
 import { TaxLookupResult } from "../../types/taxLookup.types";
+import { AttemptRecord } from "../../types/searchDiscovery.types";
 
 const BASE_URL = "https://masothue.com";
 
@@ -44,33 +45,41 @@ function htmlMatchesTaxCode(html: string, taxCode: string): boolean {
   return false;
 }
 
-function logFetchAttempt(
-  label: string,
+function recordAttempt(
+  attempts: AttemptRecord[] | undefined,
+  strategy: string,
   url: string,
   res: FetchResult | null,
   taxCode: string
 ) {
-  debugLog(`masothue: ${label}`, {
+  debugLog(`masothue: ${strategy}`, {
     url,
     status: res?.status ?? null,
     finalUrl: res?.finalUrl ?? null,
     containsTaxCode: res ? res.html.includes(taxCode) : false,
   });
+  attempts?.push({
+    strategy,
+    url,
+    status: res?.status ?? null,
+    matchedTaxCode: res ? res.html.includes(taxCode) : false,
+  });
 }
 
-async function findDetailHtml(taxCode: string): Promise<FetchResult | null> {
-  // 1. Try direct short URL: https://masothue.com/{taxCode}
+async function findDetailHtml(
+  taxCode: string,
+  attempts?: AttemptRecord[]
+): Promise<FetchResult | null> {
   const directUrl = `${BASE_URL}/${taxCode}`;
   const directRes = await fetchHtml(directUrl);
-  logFetchAttempt("direct short URL", directUrl, directRes, taxCode);
+  recordAttempt(attempts, "masothue-direct", directUrl, directRes, taxCode);
   if (directRes && htmlMatchesTaxCode(directRes.html, taxCode)) {
     return directRes;
   }
 
-  // 2. Try search endpoint (often 302s straight to the detail page).
   const searchUrl = `${BASE_URL}/Search/?q=${encodeURIComponent(taxCode)}&type=auto&token=&force-search=1`;
   const searchRes = await fetchHtml(searchUrl);
-  logFetchAttempt("search URL", searchUrl, searchRes, taxCode);
+  recordAttempt(attempts, "masothue-search", searchUrl, searchRes, taxCode);
 
   if (searchRes) {
     if (htmlMatchesTaxCode(searchRes.html, taxCode)) {
@@ -95,7 +104,13 @@ async function findDetailHtml(taxCode: string): Promise<FetchResult | null> {
 
     if (detailHref) {
       const detailRes = await fetchHtml(detailHref);
-      logFetchAttempt("search-list detail link", detailHref, detailRes, taxCode);
+      recordAttempt(
+        attempts,
+        "masothue-search-list",
+        detailHref,
+        detailRes,
+        taxCode
+      );
       if (detailRes && htmlMatchesTaxCode(detailRes.html, taxCode)) {
         return detailRes;
       }
@@ -104,11 +119,10 @@ async function findDetailHtml(taxCode: string): Promise<FetchResult | null> {
     }
   }
 
-  // 3. Emergency known URL fallback.
   const known = KNOWN_DETAIL_URLS[taxCode];
   if (known) {
     const knownRes = await fetchHtml(known);
-    logFetchAttempt("known fallback URL", known, knownRes, taxCode);
+    recordAttempt(attempts, "masothue-known", known, knownRes, taxCode);
     if (knownRes && htmlMatchesTaxCode(knownRes.html, taxCode)) {
       return knownRes;
     }
@@ -280,9 +294,10 @@ export function parseMasothueHtml(
 }
 
 export async function lookupFromMasothue(
-  taxCode: string
+  taxCode: string,
+  attempts?: AttemptRecord[]
 ): Promise<TaxLookupResult | null> {
-  const detail = await findDetailHtml(taxCode);
+  const detail = await findDetailHtml(taxCode, attempts);
   if (!detail || !detail.html) {
     debugLog("masothue: no detail HTML for", taxCode);
     return null;

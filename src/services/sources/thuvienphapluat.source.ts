@@ -2,6 +2,7 @@ import * as cheerio from "cheerio";
 import { fetchHtml, debugLog, FetchResult } from "../../utils/httpClient";
 import { normalizeText } from "../../utils/normalizeText";
 import { TaxLookupResult } from "../../types/taxLookup.types";
+import { AttemptRecord } from "../../types/searchDiscovery.types";
 
 const BASE_URL = "https://thuvienphapluat.vn";
 
@@ -13,7 +14,25 @@ function looksLikeDetail(html: string, taxCode: string): boolean {
   );
 }
 
-async function findDetailHtml(taxCode: string): Promise<FetchResult | null> {
+function recordAttempt(
+  attempts: AttemptRecord[] | undefined,
+  strategy: string,
+  url: string,
+  res: FetchResult | null,
+  taxCode: string
+) {
+  attempts?.push({
+    strategy,
+    url,
+    status: res?.status ?? null,
+    matchedTaxCode: res ? res.html.includes(taxCode) : false,
+  });
+}
+
+async function findDetailHtml(
+  taxCode: string,
+  attempts?: AttemptRecord[]
+): Promise<FetchResult | null> {
   const searchEndpoints = [
     `${BASE_URL}/ma-so-thue/tim-ma-so-thue.aspx?keyword=${encodeURIComponent(taxCode)}`,
     `${BASE_URL}/ma-so-thue?keyword=${encodeURIComponent(taxCode)}`,
@@ -22,6 +41,7 @@ async function findDetailHtml(taxCode: string): Promise<FetchResult | null> {
 
   for (const url of searchEndpoints) {
     const res = await fetchHtml(url);
+    recordAttempt(attempts, "tvpl-search", url, res, taxCode);
     if (!res) continue;
 
     if (
@@ -47,6 +67,7 @@ async function findDetailHtml(taxCode: string): Promise<FetchResult | null> {
     if (foundHref) {
       debugLog("tvpl: detail link discovered", foundHref);
       const detail = await fetchHtml(foundHref);
+      recordAttempt(attempts, "tvpl-detail", foundHref, detail, taxCode);
       if (detail) return detail;
     }
   }
@@ -144,9 +165,10 @@ export function parseThuVienPhapLuatHtml(
 }
 
 export async function lookupFromThuVienPhapLuat(
-  taxCode: string
+  taxCode: string,
+  attempts?: AttemptRecord[]
 ): Promise<TaxLookupResult | null> {
-  const detail = await findDetailHtml(taxCode);
+  const detail = await findDetailHtml(taxCode, attempts);
   if (!detail || !detail.html) {
     debugLog("tvpl: no detail HTML for", taxCode);
     return null;
