@@ -101,22 +101,18 @@ function extractFromDetail($: cheerio.CheerioAPI) {
   return result;
 }
 
-export async function lookupFromThuVienPhapLuat(
+export function parseThuVienPhapLuatHtml(
+  html: string,
   taxCode: string
-): Promise<TaxLookupResult | null> {
+): TaxLookupResult | null {
+  if (!html) return null;
   try {
-    const detail = await findDetailHtml(taxCode);
-    if (!detail || !detail.html) {
-      debugLog("tvpl: no detail HTML for", taxCode);
-      return null;
-    }
-
-    if (!looksLikeDetail(detail.html, taxCode)) {
+    if (!looksLikeDetail(html, taxCode)) {
       debugLog("tvpl: detail does not look like a tax-detail page");
       return null;
     }
 
-    const $ = cheerio.load(detail.html);
+    const $ = cheerio.load(html);
     if (!normalizeText($("body").text()).includes(taxCode)) {
       debugLog("tvpl: body does not contain taxCode", taxCode);
       return null;
@@ -126,7 +122,6 @@ export async function lookupFromThuVienPhapLuat(
 
     debugLog("tvpl: parsed", {
       taxCode,
-      finalUrl: detail.finalUrl,
       companyName: data.companyName,
       taxAddress: data.taxAddress,
       address: data.address,
@@ -143,7 +138,18 @@ export async function lookupFromThuVienPhapLuat(
       source: "thuvienphapluat.vn",
     };
   } catch (err) {
-    debugLog("tvpl: error", err);
+    debugLog("tvpl: parse error", err);
     return null;
   }
+}
+
+export async function lookupFromThuVienPhapLuat(
+  taxCode: string
+): Promise<TaxLookupResult | null> {
+  const detail = await findDetailHtml(taxCode);
+  if (!detail || !detail.html) {
+    debugLog("tvpl: no detail HTML for", taxCode);
+    return null;
+  }
+  return parseThuVienPhapLuatHtml(detail.html, taxCode);
 }

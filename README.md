@@ -110,6 +110,61 @@ curl -X POST http://localhost:3001/api/tax-lookup \
 
 Thay `SERVER_IP` bằng IP/host của server đang chạy container.
 
+## Cung cấp `detailUrl` (bỏ qua mọi search discovery)
+
+n8n vẫn chỉ cần gửi `taxCode`, nhưng nếu biết trước URL chi tiết, có thể truyền kèm để bypass mọi bước search:
+
+```bash
+wget -qO- \
+  --header="Content-Type: application/json" \
+  --post-data='{"taxCode":"1101550146","detailUrl":"https://masothue.com/1101550146-cong-ty-co-phan-anova-feed"}' \
+  http://127.0.0.1:3001/api/tax-lookup
+```
+
+Yêu cầu:
+- `detailUrl` phải có host `masothue.com` hoặc `thuvienphapluat.vn`. Host khác → HTTP 400 `INVALID_DETAIL_URL`.
+- HTML trả về phải chứa đúng `taxCode` mới được parse. Nếu lệch → trả về tất cả `null`.
+
+## External search fallback (Brave Search API)
+
+Khi cả `masothue.com` lẫn `thuvienphapluat.vn` đều không tìm thấy (search redirect sai MST, anti-bot, layout đổi…), API có thể tự discover URL chi tiết qua Brave Search.
+
+Bật ở `.env`:
+
+```env
+EXTERNAL_SEARCH_ENABLED=true
+EXTERNAL_SEARCH_PROVIDER=brave
+BRAVE_SEARCH_API_KEY=brv-...
+EXTERNAL_SEARCH_TIMEOUT_MS=10000
+```
+
+Quy trình: query `site:masothue.com {taxCode}` rồi `"{taxCode}" "masothue"`. Lọc URL có host `masothue.com`, path bắt đầu bằng `/{taxCode}-` và **không** chứa `/Search/`. Fetch URL, verify HTML chứa đúng `taxCode`, rồi parse như masothue source.
+
+## Bật debug attempts trong response
+
+Thêm `"includeDebug": true` vào body để nhận thêm trường `debug.attempts`:
+
+```bash
+curl -X POST http://localhost:3001/api/tax-lookup \
+  -H "Content-Type: application/json" \
+  -d '{"taxCode":"1101550146","includeDebug":true}'
+```
+
+Ví dụ:
+
+```json
+{
+  "success": true,
+  "taxCode": "1101550146",
+  ...,
+  "debug": {
+    "attempts": [
+      { "strategy": "masothue", "matchedTaxCode": true }
+    ]
+  }
+}
+```
+
 ## Manual test cho tax code chi nhánh / known-URL fallback
 
 Mã số thuế chi nhánh:

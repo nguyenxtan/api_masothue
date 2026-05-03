@@ -215,17 +215,13 @@ function extractFromMeta(
   return fallback;
 }
 
-export async function lookupFromMasothue(
+export function parseMasothueHtml(
+  html: string,
   taxCode: string
-): Promise<TaxLookupResult | null> {
+): TaxLookupResult | null {
+  if (!html) return null;
   try {
-    const detail = await findDetailHtml(taxCode);
-    if (!detail || !detail.html) {
-      debugLog("masothue: no detail HTML for", taxCode);
-      return null;
-    }
-
-    const $ = cheerio.load(detail.html);
+    const $ = cheerio.load(html);
 
     const data = extractFromMainBlock($);
     const meta = extractFromMeta($, taxCode);
@@ -236,6 +232,12 @@ export async function lookupFromMasothue(
       fallbackCompanyName: meta.companyName,
       fallbackAddress: meta.address,
     });
+
+    const parsedTaxId = data.taxCode;
+    if (parsedTaxId && parsedTaxId !== taxCode) {
+      debugLog("masothue: taxID mismatch", { parsed: parsedTaxId, expected: taxCode });
+      return null;
+    }
 
     const hasTaxCodeInMeta =
       meta.title.includes(taxCode) || meta.metaDesc.includes(taxCode);
@@ -256,15 +258,12 @@ export async function lookupFromMasothue(
 
     debugLog("masothue: parsed", {
       taxCode,
-      finalUrl: detail.finalUrl,
       companyName: data.companyName,
       taxAddress: data.taxAddress,
       address: data.address,
     });
 
-    if (!data.companyName && !data.taxAddress && !data.address) {
-      return null;
-    }
+    if (!data.companyName && !data.taxAddress && !data.address) return null;
 
     return {
       success: true,
@@ -275,7 +274,18 @@ export async function lookupFromMasothue(
       source: "masothue.com",
     };
   } catch (err) {
-    debugLog("masothue: error", err);
+    debugLog("masothue: parse error", err);
     return null;
   }
+}
+
+export async function lookupFromMasothue(
+  taxCode: string
+): Promise<TaxLookupResult | null> {
+  const detail = await findDetailHtml(taxCode);
+  if (!detail || !detail.html) {
+    debugLog("masothue: no detail HTML for", taxCode);
+    return null;
+  }
+  return parseMasothueHtml(detail.html, taxCode);
 }
