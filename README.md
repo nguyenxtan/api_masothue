@@ -110,13 +110,26 @@ curl -X POST http://localhost:3001/api/tax-lookup \
 
 Thay `SERVER_IP` bằng IP/host của server đang chạy container.
 
-## Manual test cho tax code chi nhánh
+## Manual test cho tax code chi nhánh / known-URL fallback
+
+Mã số thuế chi nhánh:
 
 ```bash
 curl -X POST http://localhost:3001/api/tax-lookup \
   -H "Content-Type: application/json" \
   -d '{"taxCode":"0100104595-017"}'
 ```
+
+Mã số thuế cần known-URL fallback (search redirect bị nhảy sang MST khác):
+
+```bash
+wget -qO- \
+  --header="Content-Type: application/json" \
+  --post-data='{"taxCode":"0315396676"}' \
+  http://127.0.0.1:3001/api/tax-lookup
+```
+
+Kết quả phải có `companyName` và `address` lấy từ `masothue.com` — không được trả về tất cả `null`.
 
 Kết quả phải có `companyName` và `address` khác `null`:
 
