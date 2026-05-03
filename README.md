@@ -129,7 +129,14 @@ wget -qO- \
   http://127.0.0.1:3001/api/tax-lookup
 ```
 
-Kết quả phải có `companyName` và `address` lấy từ `masothue.com` — không được trả về tất cả `null`.
+```bash
+wget -qO- \
+  --header="Content-Type: application/json" \
+  --post-data='{"taxCode":"1101550146"}' \
+  http://127.0.0.1:3001/api/tax-lookup
+```
+
+Kết quả phải có `companyName`, `taxAddress`, `address` lấy từ `masothue.com` — không được trả về tất cả `null`.
 
 Kết quả phải có `companyName` và `address` khác `null`:
 

@@ -10,6 +10,8 @@ const KNOWN_DETAIL_URLS: Record<string, string> = {
     "https://masothue.com/0100104595-017-cong-ty-van-tai-bien-container-vimc-chi-nhanh-tong-cong-ty-hang-hai-viet-nam-ctcp",
   "0315396676":
     "https://masothue.com/0315396676-cong-ty-tnhh-daon-trading-and-logistics",
+  "1101550146":
+    "https://masothue.com/1101550146-cong-ty-co-phan-anova-feed",
 };
 
 function isDetailHtml(html: string): boolean {
