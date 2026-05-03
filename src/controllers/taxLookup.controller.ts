@@ -3,9 +3,10 @@ import { validateTaxCode } from "../utils/validateTaxCode";
 import { lookupTaxCode } from "../services/taxLookup.service";
 
 export async function taxLookupHandler(req: Request, res: Response) {
-  const { taxCode } = req.body || {};
+  const raw = req.body?.taxCode;
+  const taxCode = typeof raw === "string" ? raw.trim() : "";
 
-  if (!taxCode || typeof taxCode !== "string" || !validateTaxCode(taxCode)) {
+  if (!taxCode || !validateTaxCode(taxCode)) {
     return res.status(400).json({
       success: false,
       error: "INVALID_TAX_CODE",
@@ -13,15 +14,13 @@ export async function taxLookupHandler(req: Request, res: Response) {
     });
   }
 
-  const trimmed = taxCode.trim();
-
   try {
-    const result = await lookupTaxCode(trimmed);
+    const result = await lookupTaxCode(taxCode);
     return res.status(200).json(result);
   } catch (err) {
     return res.status(200).json({
       success: true,
-      taxCode: trimmed,
+      taxCode,
       companyName: null,
       taxAddress: null,
       address: null,
